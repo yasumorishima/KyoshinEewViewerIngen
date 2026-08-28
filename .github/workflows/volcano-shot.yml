@@ -88,9 +88,10 @@ jobs:
         socat -d -d "pty,raw,echo=0,link=$APP_PORT" "pty,raw,echo=0,link=$FEED_PORT" &
         sleep 3
         ls -l "$APP_PORT" "$FEED_PORT"
-        dotnet src/KyoshinEewViewer.Desktop/bin/Release/net10.0/KyoshinEewViewer.Desktop.dll -s qzss -l -n > shots/run.log 2>&1 &
+        dotnet src/KyoshinEewViewer.Desktop/bin/Release/net10.0/KyoshinEewViewer.Desktop.dll -s qzss -l > shots/run.log 2>&1 &
         APP=$!
-        sleep 40
+        sleep 60
+        xwininfo -root -tree | head -n 20 || true
         import -window root shots/00_before.png
         while IFS=$'\t' read -r name sentence; do
           printf '%s\r\n' "$sentence" > "$FEED_PORT"
