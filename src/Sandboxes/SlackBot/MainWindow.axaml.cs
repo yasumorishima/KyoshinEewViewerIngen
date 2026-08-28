@@ -139,7 +139,7 @@ namespace SlackBot
 				Dispatcher.UIThread.Post(ResetMiniMapPosition);
 			});
 
-			Observable.CombineLatest(
+			R3.Observable.CombineLatest(
 					Map.ObservePropertyChanged(m => m.CenterLocation).AsUnitObservable(),
 					Map.ObservePropertyChanged(m => m.Zoom).AsUnitObservable())
 				.Subscribe(_ =>
