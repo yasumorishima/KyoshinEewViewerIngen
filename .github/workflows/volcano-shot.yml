@@ -1,0 +1,67 @@
+name: volcano-shot
+
+# fork 専用。PR #218 の説明用スクリーンショットを headless で撮る。
+# upstream には出さない (screenshot/volcano-shot ブランチのみ)
+on:
+  workflow_dispatch:
+    inputs:
+      memo:
+        description: '実行意図'
+        required: true
+      hexes:
+        description: 'DCReport の HEX (カンマ区切り)'
+        required: false
+        default: '53ADC51C200001C200B13B2BE3F00000000000000000000000000012270C7440,9AADC089B400009B40C22789F4691A17A00000000000000000000010FC738640,C6AD424130000412E341F783E0F10910421230200000000000000013417E39C0,53AD4894CC80014C043EE4C1F07826122081309181098496F8000012AAAFCB40,53AD4DF194000718F23F46467F44323422C1519FD1098CFE8800001223D79E00'
+
+permissions:
+  contents: write
+
+jobs:
+  shot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        submodules: 'recursive'
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      with:
+        dotnet-version: 10.0.x
+
+    - name: Install webp tools
+      run: sudo apt-get update && sudo apt-get install -y webp
+
+    - name: Build
+      run: dotnet build -c Release src/Sandboxes/SlackBot/SlackBot.csproj
+
+    - name: Capture
+      env:
+        KEVI_SHOT_HEX: ${{ inputs.hexes }}
+      run: |
+        mkdir -p shots && cd shots
+        timeout 900 dotnet run --no-build -c Release --project ../src/Sandboxes/SlackBot/SlackBot.csproj 2>&1 | tail -n 120 || true
+        ls -la
+
+    - name: Convert to png
+      run: |
+        cd shots
+        for f in *.webp; do dwebp "$f" -o "${f%.webp}.png"; done
+        ls -la *.png
+        file *.png
+
+    - name: Publish to screenshots branch
+      run: |
+        cd shots
+        mkdir -p /tmp/pub && cp *.png /tmp/pub/
+        cd "$GITHUB_WORKSPACE"
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git switch --orphan screenshots
+        git rm -rf --cached . >/dev/null 2>&1 || true
+        find . -maxdepth 1 -mindepth 1 ! -name '.git' -exec rm -rf {} +
+        cp /tmp/pub/*.png .
+        git add -A *.png
+        git commit -m "volcano map layer screenshots (run ${GITHUB_RUN_ID})"
+        git push -f origin screenshots

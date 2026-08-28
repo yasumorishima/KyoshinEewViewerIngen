@@ -5,6 +5,7 @@ using KyoshinEewViewer;
 using KyoshinEewViewer.Core;
 using System;
 using System.Globalization;
+using System.IO;
 using System.Threading;
 using KyoshinEewViewer.Map.Data;
 using Microsoft.AspNetCore.Builder;
@@ -71,6 +72,38 @@ namespace SlackBot
 			webApp.MapGet("/tsunami", context => SwitchAndCaptureAndResponseAsync(context, window.TsunamiSeries));
 			webApp.MapGet("/earthquake", context => SwitchAndCaptureAndResponseAsync(context, window.EarthquakeSeries));
 			webApp.MapGet("/kyoshin-monitor", context => SwitchAndCaptureAndResponseAsync(context, window.KyoshinMonitorSeries));
+
+			// スクリーンショット取得モード(fork のスクショ用ブランチ限定・upstream には出さない)
+			if (Environment.GetEnvironmentVariable("KEVI_SHOT_HEX") is { } shotHexes)
+			{
+				_ = Task.Run(async () =>
+				{
+					try
+					{
+						await Task.Delay(TimeSpan.FromSeconds(20));
+						await Dispatcher.UIThread.InvokeAsync(() => window.SelectedSeries = window.QzssSeries);
+						await Task.Delay(TimeSpan.FromSeconds(3));
+						var index = 0;
+						foreach (var hex in shotHexes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+						{
+							await Dispatcher.UIThread.InvokeAsync(() =>
+								KyoshinEewViewer.Series.Qzss.Events.ProcessManualDCReportRequested.Request(
+									KyoshinEewViewer.DCReportParser.DCReport.Parse(Convert.FromHexString(hex))));
+							await Task.Delay(TimeSpan.FromSeconds(4));
+							var path = $"shot_{index:00}.webp";
+							using (var fs = File.Create(path))
+								await window.CaptureImageAsync(fs);
+							logger.LogInformation("captured {Path} ({Hex})", path, hex);
+							index++;
+						}
+					}
+					catch (Exception ex)
+					{
+						logger.LogError(ex, "スクリーンショット取得に失敗しました");
+					}
+					Environment.Exit(0);
+				});
+			}
 
 			Console.CancelKeyPress += (s, e) =>
 			{

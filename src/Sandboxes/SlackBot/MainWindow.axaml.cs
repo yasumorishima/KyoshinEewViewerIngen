@@ -17,6 +17,7 @@ using KyoshinEewViewer.Series.Earthquake;
 using KyoshinEewViewer.Series.Earthquake.Events;
 using KyoshinEewViewer.Series.KyoshinMonitor;
 using KyoshinEewViewer.Series.KyoshinMonitor.Events;
+using KyoshinEewViewer.Series.Qzss;
 using KyoshinEewViewer.Series.Tsunami;
 using KyoshinEewViewer.Series.Tsunami.Events;
 using KyoshinEewViewer.Services;
@@ -47,6 +48,7 @@ namespace SlackBot
 		public KyoshinMonitorSeries KyoshinMonitorSeries { get; }
 		public EarthquakeSeries EarthquakeSeries { get; }
 		public TsunamiSeries TsunamiSeries { get; }
+		public QzssSeries QzssSeries { get; }
 
 		public MapLayer[]? BackgroundMapLayers => SelectedSeries?.MapDisplayParameter.BackgroundLayers;
 		public MapLayer[]? BaseMapLayers => SelectedSeries?.MapDisplayParameter.BaseLayers;
@@ -86,6 +88,7 @@ namespace SlackBot
 			KyoshinMonitorSeries = ServiceLocator.Current.RequireService<KyoshinMonitorSeries>();
 			EarthquakeSeries = ServiceLocator.Current.RequireService<EarthquakeSeries>();
 			TsunamiSeries = ServiceLocator.Current.RequireService<TsunamiSeries>();
+			QzssSeries = ServiceLocator.Current.RequireService<QzssSeries>();
 
 			KyoshinEewViewerApp.Selector?.ObservePropertyChanged(x => x.SelectedWindowTheme).Where(x => x != null)
 					.Subscribe(x =>
@@ -120,6 +123,8 @@ namespace SlackBot
 			EarthquakeSeries.RecreateDisplayControl();
 			TsunamiSeries.Initialize();
 			TsunamiSeries.RecreateDisplayControl();
+			QzssSeries.Initialize();
+			QzssSeries.RecreateDisplayControl();
 
 			ClientSize = new Size(1280 * Config.WindowScale, 720 * Config.WindowScale);
 
