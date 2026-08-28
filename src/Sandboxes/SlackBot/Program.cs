@@ -102,6 +102,7 @@ namespace SlackBot
 							ShotLog($"captured {path} ({new FileInfo(path).Length} bytes)");
 						}
 
+						ShotLog(await Dispatcher.UIThread.InvokeAsync(() => window.MapDiag()));
 						await CaptureAsync("shot_base.webp");
 
 						var index = 0;

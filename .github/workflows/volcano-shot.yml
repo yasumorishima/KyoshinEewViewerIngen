@@ -46,6 +46,8 @@ jobs:
         timeout 900 dotnet "$GITHUB_WORKSPACE/src/Sandboxes/SlackBot/bin/Release/net10.0/SlackBot.dll" > run.log 2>&1 || true
         echo '--- shot.log ---'
         cat shot.log || echo '(shot.log なし)'
+        echo '--- map/exception lines ---'
+        grep -nE 'マップ読込完了|地図読込|Exception|fail|error' run.log | head -n 30 || true
         echo '--- run.log (last 40) ---'
         tail -n 40 run.log
         ls -la
