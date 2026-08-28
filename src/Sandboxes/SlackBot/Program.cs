@@ -77,31 +77,51 @@ namespace SlackBot
 			// スクリーンショット取得モード(fork のスクショ用ブランチ限定・upstream には出さない)
 			if (Environment.GetEnvironmentVariable("KEVI_SHOT_HEX") is { } shotHexes)
 			{
+				static void ShotLog(string message)
+				{
+					var line = $"[shot] {DateTime.Now:HH:mm:ss} {message}";
+					Console.WriteLine(line);
+					Console.Out.Flush();
+					try { File.AppendAllText("shot.log", line + Environment.NewLine); } catch { }
+				}
+
 				_ = Task.Run(async () =>
 				{
 					try
 					{
+						ShotLog("start");
 						await Task.Delay(TimeSpan.FromSeconds(20));
+						ShotLog("selecting qzss series");
 						await Dispatcher.UIThread.InvokeAsync(() => window.SelectedSeries = window.QzssSeries);
 						await Task.Delay(TimeSpan.FromSeconds(3));
+
+						async Task CaptureAsync(string path)
+						{
+							using (var fs = File.Create(path))
+								await window.CaptureImageAsync(fs);
+							ShotLog($"captured {path} ({new FileInfo(path).Length} bytes)");
+						}
+
+						await CaptureAsync("shot_base.webp");
+
 						var index = 0;
 						foreach (var hex in shotHexes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
 						{
+							ShotLog($"injecting {hex}");
 							await Dispatcher.UIThread.InvokeAsync(() =>
 								KyoshinEewViewer.Series.Qzss.Events.ProcessManualDCReportRequested.Request(
 									KyoshinEewViewer.DCReportParser.DCReport.Parse(Convert.FromHexString(hex))));
 							await Task.Delay(TimeSpan.FromSeconds(4));
-							var path = $"shot_{index:00}.webp";
-							using (var fs = File.Create(path))
-								await window.CaptureImageAsync(fs);
-							logger.LogInformation("captured {Path} ({Hex})", path, hex);
+							await CaptureAsync($"shot_{index:00}.webp");
 							index++;
 						}
+						ShotLog("done");
 					}
 					catch (Exception ex)
 					{
-						logger.LogError(ex, "スクリーンショット取得に失敗しました");
+						ShotLog("FAILED: " + ex);
 					}
+					await Task.Delay(TimeSpan.FromSeconds(2));
 					Environment.Exit(0);
 				});
 			}

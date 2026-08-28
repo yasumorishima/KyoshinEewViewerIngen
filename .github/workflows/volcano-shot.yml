@@ -43,14 +43,19 @@ jobs:
         KEVI_SHOT_HEX: ${{ inputs.hexes }}
       run: |
         mkdir -p shots && cd shots
-        timeout 900 dotnet run --no-build -c Release --project ../src/Sandboxes/SlackBot/SlackBot.csproj 2>&1 | tail -n 120 || true
+        timeout 900 dotnet run --no-build -c Release --project ../src/Sandboxes/SlackBot/SlackBot.csproj > run.log 2>&1 || true
+        echo '--- shot.log ---'
+        cat shot.log || echo '(shot.log なし)'
+        echo '--- run.log (last 40) ---'
+        tail -n 40 run.log
         ls -la
 
     - name: Convert to png
       run: |
         cd shots
+        shopt -s nullglob
         for f in *.webp; do dwebp "$f" -o "${f%.webp}.png"; done
-        ls -la *.png
+        ls -la
         file *.png
 
     - name: Publish to screenshots branch
