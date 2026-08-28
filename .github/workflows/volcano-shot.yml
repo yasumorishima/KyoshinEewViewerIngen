@@ -40,10 +40,10 @@ jobs:
 
     - name: Capture
       env:
-        KEVI_SHOT_HEX: ${{ inputs.hexes }}
+        KEVI_SHOT_HEX: ${{ inputs.hexes || '53ADC51C200001C200B13B2BE3F00000000000000000000000000012270C7440,9AADC089B400009B40C22789F4691A17A00000000000000000000010FC738640,C6AD424130000412E341F783E0F10910421230200000000000000013417E39C0,53AD4894CC80014C043EE4C1F07826122081309181098496F8000012AAAFCB40,53AD4DF194000718F23F46467F44323422C1519FD1098CFE8800001223D79E00' }}
       run: |
         mkdir -p shots && cd shots
-        timeout 900 dotnet run --no-build -c Release --project ../src/Sandboxes/SlackBot/SlackBot.csproj > run.log 2>&1 || true
+        timeout 900 dotnet "$GITHUB_WORKSPACE/src/Sandboxes/SlackBot/bin/Release/net10.0/SlackBot.dll" > run.log 2>&1 || true
         echo '--- shot.log ---'
         cat shot.log || echo '(shot.log なし)'
         echo '--- run.log (last 40) ---'
@@ -56,7 +56,6 @@ jobs:
         shopt -s nullglob
         for f in *.webp; do dwebp "$f" -o "${f%.webp}.png"; done
         ls -la
-        file *.png
 
     - name: Publish to screenshots branch
       run: |
