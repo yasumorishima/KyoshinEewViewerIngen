@@ -1,7 +1,7 @@
 name: volcano-shot
 
-# fork 専用。PR #218 の説明用スクリーンショットを headless で撮る。
-# upstream には出さない (screenshot/volcano-shot ブランチのみ)
+# fork 専用。PR #218 の説明用スクリーンショットを実アプリ (Xvfb) で撮る。
+# 仮想シリアルポート経由で QZQSM センテンスを流し込むので、アプリ側は無改造。
 on:
   push:
     branches: [ screenshot/volcano-shot ]
@@ -10,10 +10,6 @@ on:
       memo:
         description: '実行意図'
         required: true
-      hexes:
-        description: 'DCReport の HEX (カンマ区切り)'
-        required: false
-        default: '53ADC51C200001C200B13B2BE3F00000000000000000000000000012270C7440,9AADC089B400009B40C22789F4691A17A00000000000000000000010FC738640,C6AD424130000412E341F783E0F10910421230200000000000000013417E39C0,53AD4894CC80014C043EE4C1F07826122081309181098496F8000012AAAFCB40,53AD4DF194000718F23F46467F44323422C1519FD1098CFE8800001223D79E00'
 
 permissions:
   contents: write
@@ -32,44 +28,94 @@ jobs:
       with:
         dotnet-version: 10.0.x
 
-    - name: Install webp tools
-      run: sudo apt-get update && sudo apt-get install -y webp
+    - name: Install tools
+      run: sudo apt-get update && sudo apt-get install -y xvfb socat imagemagick x11-utils xdotool
 
     - name: Build
-      run: dotnet build -c Release src/Sandboxes/SlackBot/SlackBot.csproj
+      run: dotnet build -c Release src/KyoshinEewViewer.Desktop/KyoshinEewViewer.Desktop.csproj
+
+    - name: Write config
+      run: |
+        mkdir -p ~/.config/KyoshinEewViewer
+        cat > ~/.config/KyoshinEewViewer/config.json <<'JSON'
+        {
+          "ShowWizard": false,
+          "Qzss": {
+            "Connect": true,
+            "SerialPort": "/tmp/kevi_app",
+            "BaudRate": 115200,
+            "SetupSendSfrbx": false,
+            "SetupSendRmc": false,
+            "SetupEnableQzss": false,
+            "SetupChangeUpdateRate": false
+          },
+          "Update": { "SendCrashReport": false },
+          "Logging": { "Enable": true }
+        }
+        JSON
+        cat ~/.config/KyoshinEewViewer/config.json
+
+    - name: Make NMEA sentences
+      run: |
+        python3 - <<'PY'
+        hexes = [
+            ("volcano_hakone",  "53ADC51C200001C200B13B2BE3F00000000000000000000000000012270C7440"),
+            ("volcano_shinmoe", "9AADC089B400009B40C22789F4691A17A00000000000000000000010FC738640"),
+            ("volcano_aso",     "C6AD424130000412E341F783E0F10910421230200000000000000013417E39C0"),
+            ("ashfall_aso",     "53AD4894CC80014C043EE4C1F07826122081309181098496F8000012AAAFCB40"),
+            ("ashfall_sakura",  "53AD4DF194000718F23F46467F44323422C1519FD1098CFE8800001223D79E00"),
+        ]
+        with open("sentences.txt", "w") as f:
+            for name, h in hexes:
+                assert len(h) == 64 and h[-1] == "0", h
+                body = f"QZQSM,53,{h[:63]}"
+                cs = 0
+                for c in body:
+                    cs ^= ord(c)
+                f.write(f"{name}\t$" + body + f"*{cs:02X}\n")
+        print(open("sentences.txt").read())
+        PY
 
     - name: Capture
-      env:
-        KEVI_SHOT_HEX: ${{ inputs.hexes || '53ADC51C200001C200B13B2BE3F00000000000000000000000000012270C7440,9AADC089B400009B40C22789F4691A17A00000000000000000000010FC738640,C6AD424130000412E341F783E0F10910421230200000000000000013417E39C0,53AD4894CC80014C043EE4C1F07826122081309181098496F8000012AAAFCB40,53AD4DF194000718F23F46467F44323422C1519FD1098CFE8800001223D79E00' }}
       run: |
-        mkdir -p shots && cd shots
-        timeout 900 dotnet "$GITHUB_WORKSPACE/src/Sandboxes/SlackBot/bin/Release/net10.0/SlackBot.dll" > run.log 2>&1 || true
-        echo '--- shot.log ---'
-        cat shot.log || echo '(shot.log なし)'
-        echo '--- map/exception lines ---'
-        grep -nE 'マップ読込完了|地図読込|Exception|fail|error' run.log | head -n 30 || true
-        echo '--- run.log (last 40) ---'
-        tail -n 40 run.log
-        ls -la
-
-    - name: Convert to png
-      run: |
-        cd shots
-        shopt -s nullglob
-        for f in *.webp; do dwebp "$f" -o "${f%.webp}.png"; done
-        ls -la
+        set -x
+        APP_PORT="/tmp/kevi_app"
+        FEED_PORT="/tmp/kevi_feed"
+        mkdir -p shots
+        Xvfb :99 -screen 0 1400x900x24 &
+        export DISPLAY=:99
+        sleep 3
+        socat -d -d "pty,raw,echo=0,link=$APP_PORT" "pty,raw,echo=0,link=$FEED_PORT" &
+        sleep 3
+        ls -l "$APP_PORT" "$FEED_PORT"
+        dotnet src/KyoshinEewViewer.Desktop/bin/Release/net10.0/KyoshinEewViewer.Desktop.dll -s qzss -l -n > shots/run.log 2>&1 &
+        APP=$!
+        sleep 40
+        import -window root shots/00_before.png
+        while IFS=$'\t' read -r name sentence; do
+          printf '%s\r\n' "$sentence" > "$FEED_PORT"
+          sleep 6
+          import -window root "shots/$name.png"
+          echo "captured $name"
+        done < sentences.txt
+        sleep 2
+        kill $APP || true
+        sleep 2
+        echo '--- run.log (last 60) ---'
+        tail -n 60 shots/run.log || true
+        ls -la shots
 
     - name: Publish to screenshots branch
       run: |
-        cd shots
-        mkdir -p /tmp/pub && cp *.png /tmp/pub/
-        cd "$GITHUB_WORKSPACE"
+        PUB=$(mktemp -d)
+        cp shots/*.png "$PUB/" || true
+        cp shots/run.log "$PUB/" || true
         git config user.name "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
         git switch --orphan screenshots
         git rm -rf --cached . >/dev/null 2>&1 || true
         find . -maxdepth 1 -mindepth 1 ! -name '.git' -exec rm -rf {} +
-        cp /tmp/pub/*.png .
-        git add -A *.png
+        cp "$PUB"/* .
+        git add -A
         git commit -m "volcano map layer screenshots (run ${GITHUB_RUN_ID})"
         git push -f origin screenshots
