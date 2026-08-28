@@ -28,7 +28,7 @@ public class SlackUploader(string apiToken, string channelId)
 	private Dictionary<string, string> EventMap { get; } = [];
 
 	private ISlackApiClient ApiClient { get; } = new SlackServiceBuilder().UseApiToken(apiToken).GetApiClient();
-	private ILogger Logger { get; } = AppLog.Create<SlackUploader>();
+	private Microsoft.Extensions.Logging.ILogger Logger { get; } = AppLog.Create<SlackUploader>();
 
 	public async Task UploadTsunamiInformation(TsunamiInformationUpdated x, TaskCompletionSource<string?>? imageUrlSource = null)
 	{
