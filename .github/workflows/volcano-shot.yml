@@ -3,6 +3,8 @@ name: volcano-shot
 # fork 専用。PR #218 の説明用スクリーンショットを headless で撮る。
 # upstream には出さない (screenshot/volcano-shot ブランチのみ)
 on:
+  push:
+    branches: [ screenshot/volcano-shot ]
   workflow_dispatch:
     inputs:
       memo:
