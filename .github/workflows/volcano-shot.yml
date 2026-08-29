@@ -2,6 +2,7 @@ name: volcano-shot
 
 # fork 専用。PR #218 の説明用スクリーンショットを実アプリ (Xvfb) で撮る。
 # 仮想シリアルポート経由で QZQSM センテンスを流し込むので、アプリ側は無改造。
+# ライト/ダークの両テーマを 1 回の run で撮る。
 on:
   push:
     branches: [ screenshot/volcano-shot ]
@@ -40,6 +41,7 @@ jobs:
         cat > ~/.config/KyoshinEewViewer/config.json <<'JSON'
         {
           "ShowWizard": false,
+          "Theme": { "WindowTheme": { "Type": 0, "Identifier": "Light" } },
           "Qzss": {
             "Connect": true,
             "SerialPort": "/tmp/kevi_app",
@@ -81,6 +83,7 @@ jobs:
         set -x
         APP_PORT="/tmp/kevi_app"
         FEED_PORT="/tmp/kevi_feed"
+        CFG="$HOME/.config/KyoshinEewViewer/config.json"
         mkdir -p shots
         Xvfb :99 -screen 0 1400x900x24 &
         export DISPLAY=:99
@@ -88,29 +91,56 @@ jobs:
         socat -d -d "pty,raw,echo=0,link=$APP_PORT" "pty,raw,echo=0,link=$FEED_PORT" &
         sleep 3
         ls -l "$APP_PORT" "$FEED_PORT"
-        dotnet src/KyoshinEewViewer.Desktop/bin/Release/net10.0/KyoshinEewViewer.Desktop.dll -s qzss -l > shots/run.log 2>&1 &
-        APP=$!
-        sleep 60
-        xwininfo -root -tree | head -n 20 || true
-        import -window root shots/00_before.png
-        while IFS=$'\t' read -r name sentence; do
-          printf '%s\r\n' "$sentence" > "$FEED_PORT"
-          sleep 6
-          import -window root "shots/$name.png"
-          echo "captured $name"
-        done < sentences.txt
-        sleep 2
-        kill $APP || true
-        sleep 2
-        echo '--- run.log (last 60) ---'
-        tail -n 60 shots/run.log || true
+        for THEME in Light Dark; do
+          python3 - "$CFG" "$THEME" <<'PY'
+        import json, sys
+        path, theme = sys.argv[1], sys.argv[2]
+        cfg = json.load(open(path))
+        cfg["Theme"] = {"WindowTheme": {"Type": 0, "Identifier": theme}}
+        json.dump(cfg, open(path, "w"), ensure_ascii=False, indent=2)
+        print("theme ->", json.load(open(path))["Theme"])
+        PY
+          SUFFIX=""
+          if [ "$THEME" = "Dark" ]; then SUFFIX="_dark"; fi
+          dotnet src/KyoshinEewViewer.Desktop/bin/Release/net10.0/KyoshinEewViewer.Desktop.dll -s qzss -l > "shots/run$SUFFIX.log" 2>&1 &
+          APP=$!
+          sleep 60
+          import -window root "shots/00_before$SUFFIX.png"
+          while IFS=$'\t' read -r name sentence; do
+            printf '%s\r\n' "$sentence" > "$FEED_PORT"
+            sleep 6
+            import -window root "shots/$name$SUFFIX.png"
+            echo "captured $name$SUFFIX"
+          done < sentences.txt
+          sleep 2
+          kill $APP || true
+          sleep 5
+          echo "--- run$SUFFIX.log (last 20) ---"
+          tail -n 20 "shots/run$SUFFIX.log" || true
+        done
         ls -la shots
+
+    - name: Trim black margins
+      run: |
+        python3 - <<'PY'
+        import glob, os
+        from PIL import Image
+        for p in sorted(glob.glob("shots/*.png")):
+            im = Image.open(p).convert("RGB")
+            bbox = im.getbbox()
+            if bbox is None:
+                print(os.path.basename(p), "all black, skip")
+                continue
+            out = im.crop(bbox)
+            out.save(p)
+            print(os.path.basename(p), im.size, "->", out.size)
+        PY
 
     - name: Publish to screenshots branch
       run: |
         PUB=$(mktemp -d)
         cp shots/*.png "$PUB/" || true
-        cp shots/run.log "$PUB/" || true
+        cp shots/*.log "$PUB/" || true
         git config user.name "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
         git switch --orphan screenshots
@@ -118,5 +148,5 @@ jobs:
         find . -maxdepth 1 -mindepth 1 ! -name '.git' -exec rm -rf {} +
         cp "$PUB"/* .
         git add -A
-        git commit -m "volcano map layer screenshots (run ${GITHUB_RUN_ID})"
+        git commit -m "volcano map layer screenshots light/dark (run ${GITHUB_RUN_ID})"
         git push -f origin screenshots
