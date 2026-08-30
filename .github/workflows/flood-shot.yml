@@ -1,0 +1,113 @@
+name: flood-shot
+
+# fork 専用。洪水予報の地図表示を実アプリ (Xvfb) で撮る。
+# 仮想シリアルポート経由で QZQSM センテンスを流し込むので、アプリ側は無改造。
+# ライト/ダークの両テーマを 1 回の run で撮る。
+on:
+  push:
+    branches: [ screenshot/flood-shot ]
+  workflow_dispatch:
+    inputs:
+      memo:
+        description: '実行意図'
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  APP_PTY: /tmp/kevi_app
+  FEED_PTY: /tmp/kevi_feed
+
+jobs:
+  shot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        submodules: 'recursive'
+        ref: feature/flood-map-layer
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      with:
+        dotnet-version: 10.0.x
+
+    - name: Install tools
+      run: sudo apt-get update && sudo apt-get install -y xvfb socat imagemagick x11-utils psmisc
+
+    - name: Build
+      run: dotnet build -c Release src/KyoshinEewViewer.Desktop/KyoshinEewViewer.Desktop.csproj
+
+    - name: Make NMEA sentences
+      run: |
+        python3 - <<'PY'
+        # tests/KyoshinEewViewer.DCReportParser.Tests の洪水 (Dc=11) サンプル電文
+        hexes = [
+            # 信濃川中流 Lv2 / 利根川下流部 Lv3 / 福島県夏井川 Lv4
+            ("flood_levels", "9AAD5D3594000161D5F60D939E0A8F52B1320826FF3DB2000000001240A74700"),
+            # 小貝川上流部 / 五行川 / 渡良瀬川下流部 いずれも Lv1 (警報解除)
+            ("flood_cancel", "9AADDD34A78000E0A8F548908E0A8F54DD60E0A8F584EB000000001287160400"),
+        ]
+        with open("sentences.txt", "w") as f:
+            for name, h in hexes:
+                body = h[:63]
+                s = "QZQSM,53," + body
+                x = 0
+                for ch in s:
+                    x ^= ord(ch)
+                f.write("$" + s + "*" + format(x, "02X") + "\r\n")
+        print(open("sentences.txt").read())
+        PY
+
+    - name: Shoot
+      run: |
+        set -x
+        for THEME in Light Dark; do
+          pkill -9 -f KyoshinEewViewer.Desktop.dll || true
+          rm -f "$APP_PTY" "$FEED_PTY"
+          mkdir -p ~/.config/KyoshinEewViewer
+          cat > ~/.config/KyoshinEewViewer/config.json <<JSON
+        {
+          "ShowWizard": false,
+          "Theme": { "WindowTheme": { "Type": 0, "Identifier": "$THEME" } },
+          "Qzss": {
+            "Connect": true,
+            "SerialPort": "$APP_PTY",
+            "BaudRate": 115200,
+            "SetupSendSfrbx": false,
+            "SetupSendRmc": false,
+            "SetupEnableQzss": false,
+            "SetupChangeUpdateRate": false
+          },
+          "Update": { "SendCrashReport": false },
+          "Logging": { "Enable": true }
+        }
+        JSON
+          socat pty,link="$APP_PTY",raw,echo=0 pty,link="$FEED_PTY",raw,echo=0 &
+          sleep 3
+          Xvfb :99 -screen 0 1400x900x24 &
+          sleep 3
+          DISPLAY=:99 dotnet src/KyoshinEewViewer.Desktop/bin/Release/net10.0/KyoshinEewViewer.Desktop.dll -s qzss -l &
+          sleep 35
+          while read -r line; do
+            printf '%s\r\n' "$line" > "$FEED_PTY"
+            sleep 4
+          done < sentences.txt
+          sleep 6
+          DISPLAY=:99 import -window root shot_${THEME}.png
+          mogrify -fuzz 0 -trim +repage shot_${THEME}.png
+          pkill -9 -f KyoshinEewViewer.Desktop.dll || true
+          pkill -9 socat || true
+          pkill -9 Xvfb || true
+          sleep 3
+        done
+        md5sum shot_*.png
+        identify shot_*.png
+
+    - name: Upload
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+      with:
+        name: flood-shots
+        path: shot_*.png
