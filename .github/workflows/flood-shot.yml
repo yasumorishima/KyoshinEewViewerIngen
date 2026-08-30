@@ -2,7 +2,7 @@ name: flood-shot
 
 # fork 専用。洪水予報の地図表示を実アプリ (Xvfb) で撮る。
 # 仮想シリアルポート経由で QZQSM センテンスを流し込むので、アプリ側は無改造。
-# ライト/ダークの両テーマを 1 回の run で撮る。
+# 電文ごと・テーマごとにアプリを作り直して撮る (前の窓が写り込むのを避けるため)。
 on:
   push:
     branches: [ screenshot/flood-shot ]
@@ -44,31 +44,34 @@ jobs:
       run: |
         python3 - <<'PY'
         # tests/KyoshinEewViewer.DCReportParser.Tests の洪水 (Dc=11) サンプル電文
-        hexes = [
+        hexes = {
             # 信濃川中流 Lv2 / 利根川下流部 Lv3 / 福島県夏井川 Lv4
-            ("flood_levels", "9AAD5D3594000161D5F60D939E0A8F52B1320826FF3DB2000000001240A74700"),
+            "levels": "9AAD5D3594000161D5F60D939E0A8F52B1320826FF3DB2000000001240A74700",
             # 小貝川上流部 / 五行川 / 渡良瀬川下流部 いずれも Lv1 (警報解除)
-            ("flood_cancel", "9AADDD34A78000E0A8F548908E0A8F54DD60E0A8F584EB000000001287160400"),
-        ]
-        with open("sentences.txt", "w") as f:
-            for name, h in hexes:
-                body = h[:63]
-                s = "QZQSM,53," + body
-                x = 0
-                for ch in s:
-                    x ^= ord(ch)
+            "cancel": "9AADDD34A78000E0A8F548908E0A8F54DD60E0A8F584EB000000001287160400",
+        }
+        for name, h in hexes.items():
+            s = "QZQSM,53," + h[:63]
+            x = 0
+            for ch in s:
+                x ^= ord(ch)
+            with open("sentence_" + name + ".txt", "w") as f:
                 f.write("$" + s + "*" + format(x, "02X") + "\r\n")
-        print(open("sentences.txt").read())
+            print(name, open("sentence_" + name + ".txt").read())
         PY
 
     - name: Shoot
       run: |
         set -x
         for THEME in Light Dark; do
-          pkill -9 -f KyoshinEewViewer.Desktop.dll || true
-          rm -f "$APP_PTY" "$FEED_PTY"
-          mkdir -p ~/.config/KyoshinEewViewer
-          cat > ~/.config/KyoshinEewViewer/config.json <<JSON
+          for CASE in levels cancel; do
+            pkill -9 -f KyoshinEewViewer.Desktop.dll || true
+            pkill -9 socat || true
+            pkill -9 Xvfb || true
+            sleep 2
+            rm -f "$APP_PTY" "$FEED_PTY"
+            mkdir -p ~/.config/KyoshinEewViewer
+            cat > ~/.config/KyoshinEewViewer/config.json <<JSON
         {
           "ShowWizard": false,
           "Theme": { "WindowTheme": { "Type": 0, "Identifier": "$THEME" } },
@@ -85,26 +88,22 @@ jobs:
           "Logging": { "Enable": true }
         }
         JSON
-          socat pty,link="$APP_PTY",raw,echo=0 pty,link="$FEED_PTY",raw,echo=0 &
-          sleep 3
-          Xvfb :99 -screen 0 1400x900x24 &
-          sleep 3
-          DISPLAY=:99 dotnet src/KyoshinEewViewer.Desktop/bin/Release/net10.0/KyoshinEewViewer.Desktop.dll -s qzss -l &
-          sleep 35
-          while read -r line; do
-            printf '%s\r\n' "$line" > "$FEED_PTY"
-            sleep 4
-          done < sentences.txt
-          sleep 6
-          DISPLAY=:99 import -window root shot_${THEME}.png
-          mogrify -fuzz 0 -trim +repage shot_${THEME}.png
-          pkill -9 -f KyoshinEewViewer.Desktop.dll || true
-          pkill -9 socat || true
-          pkill -9 Xvfb || true
-          sleep 3
+            socat pty,link="$APP_PTY",raw,echo=0 pty,link="$FEED_PTY",raw,echo=0 &
+            sleep 3
+            Xvfb :99 -screen 0 1400x900x24 &
+            sleep 3
+            DISPLAY=:99 dotnet src/KyoshinEewViewer.Desktop/bin/Release/net10.0/KyoshinEewViewer.Desktop.dll -s qzss -l &
+            sleep 35
+            cat "sentence_${CASE}.txt" > "$FEED_PTY"
+            sleep 8
+            DISPLAY=:99 import -window root "shot_${THEME}_${CASE}.png"
+            mogrify -fuzz 0 -trim +repage "shot_${THEME}_${CASE}.png"
+          done
         done
+        pkill -9 -f KyoshinEewViewer.Desktop.dll || true
+        pkill -9 socat || true
+        pkill -9 Xvfb || true
         md5sum shot_*.png
-        identify shot_*.png
 
     - name: Upload
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
